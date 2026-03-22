@@ -1,19 +1,22 @@
-name: Docker Publish Multi-Platform
+name: Docker Publish and GKE Deploy
 
 on:
   push:
     branches:
       - main
       - develop
-      - feature/*
   workflow_dispatch:
 
 env:
   IMAGE_NAME: phancydeer/dvop400
 
+permissions:
+  contents: 'read'
+  id-token: 'write'
+
 jobs:
   # ------------------------------------------------------------
-  # Job 1: Linux/AMD64 and Linux/ARM64 Build (Uses Linux Runner)
+  # Job 1: Build & Push Multi-Platform Image
   # ------------------------------------------------------------
   build-linux:
     runs-on: ubuntu-latest
@@ -33,21 +36,48 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Extract Docker metadata (tags, labels)
+      - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest-linux,enable=true
-            type=sha,prefix=sha-linux-
+            type=raw,value=latest,enable=true
+            type=sha,format=long,prefix=
 
-      - name: Build and push Linux multi-platform Docker image
+      - name: Build and push
         uses: docker/build-push-action@v5
         with:
           context: .
-          # Use the default Dockerfile (the Nginx/Alpine version)
-          file: ./Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
-          platforms: linux/amd64,linux/arm64 # Linux and Mac M-series
+          platforms: linux/amd64,linux/arm64
+
+  # ------------------------------------------------------------
+  # Job 2: Deploy to Google Kubernetes Engine
+  # ------------------------------------------------------------
+  deploy-gke:
+    needs: build-linux
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: 'projects/324020082271/locations/global/workloadIdentityPools/dvop-pool/providers/github-provider'
+          service_account: 'kubernetes-engine-developer@project-febe5957-e293-40b1-907.iam.gserviceaccount.com'
+
+      - name: Get GKE Credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: 'dvop-cluster'
+          location: 'us-west1'
+
+      - name: Deploy to Cluster
+        run: |
+          kubectl set image deployment/dvop-401-app \
+            dvop400=${{ env.IMAGE_NAME }}:${{ github.sha }}
+          
+          kubectl rollout status deployment/dvop-401-app
