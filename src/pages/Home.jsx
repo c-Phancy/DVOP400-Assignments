@@ -27,7 +27,7 @@ export default function Home() {
                 color: "var(--text)",
               }}
             >
-              NOT Git Workflows
+              Git Workflows
             </h1>
             <div
               className="subtitle"
